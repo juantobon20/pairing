@@ -1,6 +1,8 @@
 package com.example.testpairingbyqr.adb
 
 import android.content.Context
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
@@ -58,6 +60,20 @@ class AdbMdnsDiscovery(
     } catch (e: SecurityException) {
         logw("[$serviceType] sin MulticastLock: ${e.message}", e)
         null
+    }
+
+    /**
+     * Red sobre la que se busca. Sin esto, NSD usa la red por defecto de la app, que con una VPN
+     * activa es el túnel (tun0): mDNS es multicast de enlace local y no viaja por ahí, así que
+     * `discoverServices()` falla en seco con FAILURE_INTERNAL_ERROR. Pedir explícitamente el
+     * transporte Wi-Fi hace que el descubrimiento ignore la VPN.
+     *
+     * El constructor de [NetworkRequest.Builder] ya exige NET_CAPABILITY_NOT_VPN por defecto.
+     */
+    private val wifiRequest: NetworkRequest by lazy {
+        NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .build()
     }
 
     /** Reintentos tras un onStartDiscoveryFailed (el sistema puede no estar listo todavía). */
@@ -127,8 +143,15 @@ class AdbMdnsDiscovery(
         discoveryListener = l
         acquireMulticastLock()
         try {
-            nsdManager.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, l)
-            logd("[$serviceType] discoverServices() enviado, esperando callback")
+            // El overload con NetworkRequest existe desde API 33; en 30..32 no hay más remedio
+            // que usar la red por defecto.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                nsdManager.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, wifiRequest, executor, l)
+                logd("[$serviceType] discoverServices(acotado a Wi-Fi) enviado, esperando callback")
+            } else {
+                nsdManager.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, l)
+                logd("[$serviceType] discoverServices(red por defecto) enviado, esperando callback")
+            }
         } catch (e: IllegalArgumentException) {
             started = false
             discoveryListener = null
@@ -146,7 +169,10 @@ class AdbMdnsDiscovery(
     private fun scheduleRetry() {
         if (retries >= MAX_RETRIES) {
             logw("[$serviceType] sin más reintentos")
-            listener.onLog("Descubrimiento de $serviceType abandonado tras $MAX_RETRIES intentos")
+            listener.onLog(
+                "Descubrimiento de $serviceType abandonado tras $MAX_RETRIES intentos. " +
+                    "Si hay una VPN activa, desconéctala y pulsa Iniciar.",
+            )
             return
         }
         val delaySeconds = RETRY_DELAYS_SECONDS[retries.coerceAtMost(RETRY_DELAYS_SECONDS.lastIndex)]

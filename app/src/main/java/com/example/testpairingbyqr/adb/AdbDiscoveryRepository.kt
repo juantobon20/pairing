@@ -30,6 +30,8 @@ data class DiscoveryState(
     val running: Boolean = false,
     val endpoints: List<AdbEndpoint> = emptyList(),
     val logs: List<String> = emptyList(),
+    /** null mientras no se haya podido leer el ajuste. */
+    val wirelessDebugging: Boolean? = null,
 ) {
     val pairingEndpoints: List<AdbEndpoint> get() = endpoints.filter { it.isPairing }
     val connectEndpoints: List<AdbEndpoint> get() = endpoints.filterNot { it.isPairing }
@@ -87,6 +89,19 @@ object AdbDiscoveryRepository {
             if (it.key == key) it.copy(active = false) else it
         }
         _state.value = _state.value.copy(endpoints = endpoints)
+    }
+
+    @Synchronized
+    fun setWirelessDebugging(enabled: Boolean?) {
+        if (_state.value.wirelessDebugging == enabled) return
+        _state.value = _state.value.copy(wirelessDebugging = enabled)
+        log(
+            when (enabled) {
+                true -> "Depuración inalámbrica activada: adbd ya puede anunciarse"
+                false -> "Depuración inalámbrica desactivada: adbd no anuncia nada"
+                null -> "Estado de la depuración inalámbrica no legible"
+            },
+        )
     }
 
     @Synchronized

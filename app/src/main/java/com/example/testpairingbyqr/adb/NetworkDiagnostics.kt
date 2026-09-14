@@ -21,7 +21,17 @@ object NetworkDiagnostics {
             append(" · Wi-Fi ").append(wifiState(app))
             append(" · Depuración inalámbrica: ").append(wirelessDebuggingState(app))
             append(" · IPs ").append(localIpAddresses())
+            if (hasVpn(app)) {
+                append(" · VPN activa: el descubrimiento se acota al transporte Wi-Fi")
+            }
         }
+    }
+
+    /** Una VPN al frente convierte el túnel en la red por defecto de la app, y mDNS no pasa por él. */
+    fun hasVpn(context: Context): Boolean {
+        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return false
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork ?: return false) ?: return false
+        return caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
     }
 
     private fun transports(context: Context): String {
@@ -49,17 +59,29 @@ object NetworkDiagnostics {
         "desconocido (${e.message})"
     }
 
+    /** Clave de Ajustes para el interruptor de depuración inalámbrica. */
+    const val SETTING_ADB_WIFI_ENABLED = "adb_wifi_enabled"
+
     /**
-     * `adb_wifi_enabled` es la misma clave que usa Ajustes para el interruptor de depuración
-     * inalámbrica. Si vale 0, `_adb-tls-connect._tcp` no se anuncia y no hay nada que descubrir.
+     * Si vale 0, adbd no anuncia `_adb-tls-connect._tcp` y no hay absolutamente nada que
+     * descubrir, por muy bien que funcione NSD.
+     *
+     * @return null si el valor no se puede leer.
      */
-    private fun wirelessDebuggingState(context: Context): String = try {
-        when (Settings.Global.getInt(context.contentResolver, "adb_wifi_enabled", -1)) {
-            1 -> "activada"
-            0 -> "DESACTIVADA"
-            else -> "no legible"
+    fun isWirelessDebuggingEnabled(context: Context): Boolean? = try {
+        when (Settings.Global.getInt(context.contentResolver, SETTING_ADB_WIFI_ENABLED, -1)) {
+            1 -> true
+            0 -> false
+            else -> null
         }
     } catch (e: Exception) {
-        "no legible (${e.message})"
+        null
     }
+
+    private fun wirelessDebuggingState(context: Context): String =
+        when (isWirelessDebuggingEnabled(context)) {
+            true -> "activada"
+            false -> "DESACTIVADA"
+            null -> "no legible"
+        }
 }

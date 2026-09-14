@@ -137,6 +137,8 @@ fun PairingScreen(modifier: Modifier = Modifier) {
             style = MaterialTheme.typography.bodyMedium,
         )
 
+        WirelessDebuggingCard(state.wirelessDebugging, context)
+
         Button(
             onClick = { AdbDiscoveryRepository.log(WirelessDebuggingLauncher.openWirelessDebugging(context)) },
             modifier = Modifier.fillMaxWidth(),
@@ -188,6 +190,40 @@ fun PairingScreen(modifier: Modifier = Modifier) {
         }
 
         LogCard(state.logs) { clipboard.setText(AnnotatedString(it)) }
+    }
+}
+
+@Composable
+private fun WirelessDebuggingCard(enabled: Boolean?, context: Context) {
+    if (enabled != false) return
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = "Depuración inalámbrica desactivada",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = "El descubrimiento está escuchando correctamente, pero adbd no anuncia " +
+                    "nada mientras el interruptor esté apagado: no aparecerá ninguna IP ni puerto.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            TextButton(
+                onClick = {
+                    AdbDiscoveryRepository.log(WirelessDebuggingLauncher.openWirelessDebugging(context))
+                },
+            ) {
+                Text("Activar en Ajustes")
+            }
+        }
     }
 }
 

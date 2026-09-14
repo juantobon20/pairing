@@ -8,10 +8,12 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.database.ContentObserver
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import com.example.testpairingbyqr.MainActivity
 import com.example.testpairingbyqr.R
@@ -24,6 +26,18 @@ class AdbDiscoveryService : Service(), AdbMdnsDiscovery.Listener {
 
     private val handler = Handler(Looper.getMainLooper())
     private var discoveries: List<AdbMdnsDiscovery> = emptyList()
+
+    /**
+     * El usuario enciende la depuración inalámbrica desde Ajustes, fuera de esta app. Observar
+     * el ajuste evita el caso en que todo funciona pero no aparece nada porque adbd no anuncia.
+     */
+    private val wirelessDebuggingObserver = object : ContentObserver(handler) {
+        override fun onChange(selfChange: Boolean) {
+            AdbDiscoveryRepository.setWirelessDebugging(
+                NetworkDiagnostics.isWirelessDebuggingEnabled(this@AdbDiscoveryService),
+            )
+        }
+    }
     @Volatile
     private var lastNotificationText: String? = null
 
@@ -33,6 +47,13 @@ class AdbDiscoveryService : Service(), AdbMdnsDiscovery.Listener {
         super.onCreate()
         logd("Service.onCreate")
         createNotificationChannel()
+        runCatching {
+            contentResolver.registerContentObserver(
+                Settings.Global.getUriFor(NetworkDiagnostics.SETTING_ADB_WIFI_ENABLED),
+                false,
+                wirelessDebuggingObserver,
+            )
+        }.onFailure { logw("No se pudo observar adb_wifi_enabled", it) }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -57,6 +78,7 @@ class AdbDiscoveryService : Service(), AdbMdnsDiscovery.Listener {
 
         AdbDiscoveryRepository.log(LocalNetworkAccess.diagnostics(this))
         AdbDiscoveryRepository.log(NetworkDiagnostics.describe(this))
+        AdbDiscoveryRepository.setWirelessDebugging(NetworkDiagnostics.isWirelessDebuggingEnabled(this))
         if (discoveries.isEmpty()) {
             discoveries = listOf(
                 AdbMdnsDiscovery(this, SERVICE_TYPE_PAIRING, this),
@@ -74,6 +96,7 @@ class AdbDiscoveryService : Service(), AdbMdnsDiscovery.Listener {
 
     override fun onDestroy() {
         logd("Service.onDestroy")
+        runCatching { contentResolver.unregisterContentObserver(wirelessDebuggingObserver) }
         discoveries.forEach { it.stop() }
         discoveries = emptyList()
         AdbDiscoveryRepository.setRunning(false)

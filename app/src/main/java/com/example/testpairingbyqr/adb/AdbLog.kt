@@ -2,6 +2,7 @@ package com.example.testpairingbyqr.adb
 
 import android.net.nsd.NsdServiceInfo
 import android.os.Build
+import android.os.ext.SdkExtensions
 import android.util.Log
 
 /** Un único tag para poder filtrar todo el flujo: `adb logcat -s AdbMdns`. */
@@ -28,7 +29,12 @@ fun describe(info: NsdServiceInfo): String {
             "$k=${v?.let { String(it, Charsets.UTF_8) } ?: ""}"
         }
     }.getOrDefault("?")
-    val network = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) "${info.network}" else "n/a"
+    // getNetwork() no llegó con una versión de plataforma, sino con la extensión T v3.
+    val network = if (SdkExtensions.getExtensionVersion(Build.VERSION_CODES.TIRAMISU) >= 3) {
+        "${info.network}"
+    } else {
+        "n/a"
+    }
     return "name='${info.serviceName}' type='${info.serviceType}' port=${info.port} " +
         "addrs=$addresses net=$network attrs=[$attributes]"
 }
