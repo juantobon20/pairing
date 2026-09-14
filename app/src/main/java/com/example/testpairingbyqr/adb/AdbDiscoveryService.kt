@@ -31,11 +31,14 @@ class AdbDiscoveryService : Service(), AdbMdnsDiscovery.Listener {
 
     override fun onCreate() {
         super.onCreate()
+        logd("Service.onCreate")
         createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        logd("Service.onStartCommand action=${intent?.action} flags=$flags startId=$startId")
         if (intent?.action == ACTION_STOP) {
+            logd("Service: parada solicitada")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -52,18 +55,25 @@ class AdbDiscoveryService : Service(), AdbMdnsDiscovery.Listener {
             startForeground(NOTIFICATION_ID, buildNotification(DEFAULT_TEXT))
         }
 
+        AdbDiscoveryRepository.log(LocalNetworkAccess.diagnostics(this))
+        AdbDiscoveryRepository.log(NetworkDiagnostics.describe(this))
         if (discoveries.isEmpty()) {
             discoveries = listOf(
                 AdbMdnsDiscovery(this, SERVICE_TYPE_PAIRING, this),
                 AdbMdnsDiscovery(this, SERVICE_TYPE_CONNECT, this),
             )
-            discoveries.forEach { it.start() }
-            AdbDiscoveryRepository.setRunning(true)
+        } else {
+            logd("Service: reusando los descubrimientos existentes")
         }
+        // start() es idempotente: relanza solo los que no estén escuchando (p. ej. tras agotar
+        // los reintentos), así el botón "Iniciar" siempre sirve para volver a intentarlo.
+        discoveries.forEach { it.start() }
+        AdbDiscoveryRepository.setRunning(true)
         return START_STICKY
     }
 
     override fun onDestroy() {
+        logd("Service.onDestroy")
         discoveries.forEach { it.stop() }
         discoveries = emptyList()
         AdbDiscoveryRepository.setRunning(false)

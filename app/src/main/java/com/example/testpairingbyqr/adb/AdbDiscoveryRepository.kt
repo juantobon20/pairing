@@ -1,5 +1,6 @@
 package com.example.testpairingbyqr.adb
 
+import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -96,6 +97,8 @@ object AdbDiscoveryRepository {
 
     @Synchronized
     fun log(message: String) {
+        // Todo lo que se ve en la UI va también a logcat, para poder pedir un `adb logcat -s AdbMdns`.
+        Log.i(TAG, message)
         val line = "${timeFormat.format(Date())}  $message"
         val logs = (_state.value.logs + line).takeLast(MAX_LOGS)
         _state.value = _state.value.copy(logs = logs)
