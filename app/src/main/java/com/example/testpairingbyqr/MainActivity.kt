@@ -2,7 +2,10 @@ package com.example.testpairingbyqr
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.Settings
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -43,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import com.example.testpairingbyqr.adb.AdbDiscoveryRepository
 import com.example.testpairingbyqr.adb.AdbDiscoveryService
 import com.example.testpairingbyqr.adb.AdbEndpoint
+import com.example.testpairingbyqr.adb.LocalNetworkAccess
 import com.example.testpairingbyqr.adb.SERVICE_TYPE_CONNECT
 import com.example.testpairingbyqr.adb.SERVICE_TYPE_PAIRING
 import com.example.testpairingbyqr.adb.WirelessDebuggingLauncher
@@ -86,7 +90,7 @@ fun PairingScreen(modifier: Modifier = Modifier) {
     ) { granted ->
         if (!granted) {
             AdbDiscoveryRepository.log(
-                "Sin permiso de red local: el sistema no resolverá los dispositivos mDNS",
+                "Sin permiso de red local: NsdManager fallará al iniciar el descubrimiento",
             )
         }
         AdbDiscoveryService.start(context)
@@ -99,13 +103,12 @@ fun PairingScreen(modifier: Modifier = Modifier) {
         ) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        // Desde targetSdk 37 el acceso a la red local está bloqueado por defecto: sin este
-        // permiso NsdManager se queda en el selector de dispositivo del sistema sin resolver nada.
-        if (Build.VERSION.SDK_INT >= 37 &&
-            context.checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            localNetworkPermission.launch(Manifest.permission.ACCESS_LOCAL_NETWORK)
+        AdbDiscoveryRepository.log(LocalNetworkAccess.diagnostics(context))
+        // Ojo: no se compara contra SDK_INT. Hay ROMs endurecidas (GrapheneOS) que aplican la
+        // restricción de red local con un nivel de API distinto al de AOSP, así que se le
+        // pregunta al sistema si conoce el permiso en lugar de asumir "API >= 37".
+        if (LocalNetworkAccess.needsRequest(context)) {
+            localNetworkPermission.launch(LocalNetworkAccess.PERMISSION)
         } else {
             AdbDiscoveryService.start(context)
         }
@@ -144,6 +147,11 @@ fun PairingScreen(modifier: Modifier = Modifier) {
 
         DiscoveryControls(state.running, context)
 
+        PermissionCard(
+            context = context,
+            onRequest = { localNetworkPermission.launch(LocalNetworkAccess.PERMISSION) },
+        )
+
         EndpointSection(
             title = "Emparejamiento",
             serviceType = SERVICE_TYPE_PAIRING,
@@ -176,6 +184,55 @@ fun PairingScreen(modifier: Modifier = Modifier) {
 
         LogCard(state.logs)
     }
+}
+
+@Composable
+private fun PermissionCard(context: Context, onRequest: () -> Unit) {
+    val knownToPlatform = remember { LocalNetworkAccess.isKnownToPlatform(context) }
+    val hasInternet = remember { LocalNetworkAccess.hasInternetPermission(context) }
+    val hasLocalNetwork = LocalNetworkAccess.isGranted(context)
+    if (!knownToPlatform && hasInternet) return
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text("Permisos de red", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            if (knownToPlatform && !hasLocalNetwork) {
+                Text(
+                    text = "Falta el permiso de red local (ACCESS_LOCAL_NETWORK). Sin él, " +
+                        "NsdManager responde \"no se pudo iniciar el descubrimiento\" con código 0.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            if (!hasInternet) {
+                Text(
+                    text = "El permiso de red (INTERNET) está revocado. En GrapheneOS se controla " +
+                        "desde Ajustes > Apps > esta app > Permisos > Red.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (knownToPlatform && !hasLocalNetwork) {
+                    TextButton(onClick = onRequest) { Text("Conceder") }
+                }
+                TextButton(onClick = { context.openAppSettings() }) { Text("Abrir ajustes de la app") }
+            }
+        }
+    }
+}
+
+private fun Context.openAppSettings() {
+    startActivity(
+        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+    )
 }
 
 @Composable
