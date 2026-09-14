@@ -47,6 +47,7 @@ import com.example.testpairingbyqr.adb.AdbDiscoveryRepository
 import com.example.testpairingbyqr.adb.AdbDiscoveryService
 import com.example.testpairingbyqr.adb.AdbEndpoint
 import com.example.testpairingbyqr.adb.LocalNetworkAccess
+import com.example.testpairingbyqr.adb.NetworkDiagnostics
 import com.example.testpairingbyqr.adb.SERVICE_TYPE_CONNECT
 import com.example.testpairingbyqr.adb.SERVICE_TYPE_PAIRING
 import com.example.testpairingbyqr.adb.WirelessDebuggingLauncher
@@ -88,11 +89,13 @@ fun PairingScreen(modifier: Modifier = Modifier) {
     val localNetworkPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        if (!granted) {
-            AdbDiscoveryRepository.log(
-                "Sin permiso de red local: NsdManager fallará al iniciar el descubrimiento",
-            )
-        }
+        AdbDiscoveryRepository.log(
+            if (granted) {
+                "Permiso de red local concedido"
+            } else {
+                "Sin permiso de red local: NsdManager fallará al iniciar el descubrimiento"
+            },
+        )
         AdbDiscoveryService.start(context)
     }
 
@@ -104,10 +107,12 @@ fun PairingScreen(modifier: Modifier = Modifier) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         AdbDiscoveryRepository.log(LocalNetworkAccess.diagnostics(context))
+        AdbDiscoveryRepository.log(NetworkDiagnostics.describe(context))
         // Ojo: no se compara contra SDK_INT. Hay ROMs endurecidas (GrapheneOS) que aplican la
         // restricción de red local con un nivel de API distinto al de AOSP, así que se le
         // pregunta al sistema si conoce el permiso en lugar de asumir "API >= 37".
         if (LocalNetworkAccess.needsRequest(context)) {
+            AdbDiscoveryRepository.log("Pidiendo ACCESS_LOCAL_NETWORK antes de arrancar")
             localNetworkPermission.launch(LocalNetworkAccess.PERMISSION)
         } else {
             AdbDiscoveryService.start(context)
@@ -182,7 +187,7 @@ fun PairingScreen(modifier: Modifier = Modifier) {
             }
         }
 
-        LogCard(state.logs)
+        LogCard(state.logs) { clipboard.setText(AnnotatedString(it)) }
     }
 }
 
@@ -339,17 +344,29 @@ private fun EndpointRow(endpoint: AdbEndpoint, onCopy: (String) -> Unit) {
 }
 
 @Composable
-private fun LogCard(logs: List<String>) {
+private fun LogCard(logs: List<String>, onCopy: (String) -> Unit) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            Text("Registro", style = MaterialTheme.typography.titleSmall)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Registro (${logs.size})", style = MaterialTheme.typography.titleSmall)
+                TextButton(
+                    onClick = { onCopy(logs.joinToString("\n")) },
+                    enabled = logs.isNotEmpty(),
+                ) {
+                    Text("Copiar registro")
+                }
+            }
             if (logs.isEmpty()) {
                 Text("Sin eventos todavía.", style = MaterialTheme.typography.bodySmall)
             } else {
-                logs.asReversed().take(40).forEach {
+                logs.asReversed().forEach {
                     Text(it, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                 }
             }
