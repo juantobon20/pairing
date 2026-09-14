@@ -2,6 +2,7 @@ package com.example.testpairingbyqr.adb
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
 import android.provider.Settings
@@ -25,6 +26,28 @@ object NetworkDiagnostics {
                 append(" · VPN activa: el descubrimiento se acota al transporte Wi-Fi")
             }
         }
+    }
+
+    /**
+     * La red Wi-Fi real, ignorando el túnel de cualquier VPN. Es la única sobre la que tiene
+     * sentido hacer mDNS.
+     */
+    @Suppress("DEPRECATION") // allNetworks: la alternativa es un callback asíncrono, y aquí hace
+    // falta una respuesta inmediata en el momento de arrancar el descubrimiento.
+    fun wifiNetwork(context: Context): Network? {
+        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return null
+        return cm.allNetworks.firstOrNull { network ->
+            val caps = cm.getNetworkCapabilities(network)
+            caps != null &&
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+                !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        }
+    }
+
+    /** Nombre de interfaz (wlan0) de una red, para poder unirse al grupo multicast por ahí. */
+    fun interfaceNameOf(context: Context, network: Network): String? {
+        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return null
+        return cm.getLinkProperties(network)?.interfaceName
     }
 
     /** Una VPN al frente convierte el túnel en la red por defecto de la app, y mDNS no pasa por él. */

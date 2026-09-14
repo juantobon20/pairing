@@ -1,8 +1,6 @@
 package com.example.testpairingbyqr.adb
 
 import android.content.Context
-import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
@@ -62,19 +60,8 @@ class AdbMdnsDiscovery(
         null
     }
 
-    /**
-     * Red sobre la que se busca. Sin esto, NSD usa la red por defecto de la app, que con una VPN
-     * activa es el túnel (tun0): mDNS es multicast de enlace local y no viaja por ahí, así que
-     * `discoverServices()` falla en seco con FAILURE_INTERNAL_ERROR. Pedir explícitamente el
-     * transporte Wi-Fi hace que el descubrimiento ignore la VPN.
-     *
-     * El constructor de [NetworkRequest.Builder] ya exige NET_CAPABILITY_NOT_VPN por defecto.
-     */
-    private val wifiRequest: NetworkRequest by lazy {
-        NetworkRequest.Builder()
-            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-            .build()
-    }
+    /** Plan B cuando NsdManager no puede con la VPN; se crea solo si hace falta. */
+    private var socketDiscovery: MdnsSocketDiscovery? = null
 
     /** Reintentos tras un onStartDiscoveryFailed (el sistema puede no estar listo todavía). */
     private var retries = 0
@@ -104,9 +91,11 @@ class AdbMdnsDiscovery(
             override fun onStartDiscoveryFailed(type: String, errorCode: Int) {
                 started = false
                 discoveryListener = null
-                releaseMulticastLock()
                 logw("[$type] onStartDiscoveryFailed ${errorName(errorCode)}")
                 listener.onLog("No se pudo iniciar el descubrimiento de $type: ${errorName(errorCode)}")
+                // Antes de soltar el lock: el fallback lo necesita para recibir multicast.
+                startSocketFallback()
+                releaseMulticastLock()
                 scheduleRetry()
             }
 
@@ -143,11 +132,14 @@ class AdbMdnsDiscovery(
         discoveryListener = l
         acquireMulticastLock()
         try {
-            // El overload con NetworkRequest existe desde API 33; en 30..32 no hay más remedio
-            // que usar la red por defecto.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                nsdManager.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, wifiRequest, executor, l)
-                logd("[$serviceType] discoverServices(acotado a Wi-Fi) enviado, esperando callback")
+            // Se pasa la red Wi-Fi concreta, no un NetworkRequest: el overload con
+            // NetworkRequest reporta onDiscoveryStarted sin haber arrancado nada y se traga el
+            // fallo real de cada red (solo lo escribe en logcat), así que no habría forma de
+            // enterarse de que no funciona. El overload con Network existe desde API 33.
+            val wifi = NetworkDiagnostics.wifiNetwork(appContext)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && wifi != null) {
+                nsdManager.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, wifi, executor, l)
+                logd("[$serviceType] discoverServices(red=$wifi) enviado, esperando callback")
             } else {
                 nsdManager.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, l)
                 logd("[$serviceType] discoverServices(red por defecto) enviado, esperando callback")
@@ -181,6 +173,18 @@ class AdbMdnsDiscovery(
         scheduler.schedule({ if (!started) start(isRetry = true) }, delaySeconds, TimeUnit.SECONDS)
     }
 
+    /**
+     * NsdManager no funciona con una VPN levantada (falla incluso pidiéndole la red Wi-Fi), así
+     * que en cuanto se niega se levanta el descubrimiento por socket propio. Los dos pueden
+     * convivir: el repositorio deduplica por nombre de instancia.
+     */
+    private fun startSocketFallback() {
+        if (socketDiscovery != null) return
+        logd("[$serviceType] arrancando descubrimiento directo por socket")
+        socketDiscovery = MdnsSocketDiscovery(appContext, serviceType, listener).also { it.start() }
+        acquireMulticastLock()
+    }
+
     private fun acquireMulticastLock() {
         val lock = multicastLock ?: return
         try {
@@ -195,6 +199,8 @@ class AdbMdnsDiscovery(
     }
 
     private fun releaseMulticastLock() {
+        // Mientras el descubrimiento por socket esté vivo, el lock sigue haciendo falta.
+        if (socketDiscovery != null) return
         val lock = multicastLock ?: return
         try {
             while (lock.isHeld) lock.release()
@@ -205,6 +211,8 @@ class AdbMdnsDiscovery(
 
     fun stop() {
         logd("[$serviceType] stop()")
+        socketDiscovery?.stop()
+        socketDiscovery = null
         val l = discoveryListener
         discoveryListener = null
         started = false
