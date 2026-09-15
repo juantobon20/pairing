@@ -163,7 +163,8 @@ class AdbMdnsDiscovery(
             logw("[$serviceType] sin más reintentos")
             listener.onLog(
                 "Descubrimiento de $serviceType abandonado tras $MAX_RETRIES intentos. " +
-                    "Si hay una VPN activa, desconéctala y pulsa Iniciar.",
+                    "Con una VPN conectada seguirá fallando: excluye esta app en el cliente VPN " +
+                    "o desconéctala (se relanza solo al cambiar la red).",
             )
             return
         }

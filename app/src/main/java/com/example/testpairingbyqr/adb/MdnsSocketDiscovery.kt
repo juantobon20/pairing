@@ -87,8 +87,22 @@ class MdnsSocketDiscovery(
         socket = sock
 
         val group = InetAddress.getByName(MdnsPacket.MULTICAST_ADDRESS)
+
+        // Atar el socket a la Wi-Fi es lo ideal, pero bajo una VPN el sistema lo deniega con
+        // EPERM a propósito (una app capturada por el túnel no puede escaparse de él). No es
+        // motivo para rendirse: aunque no podamos *enviar* consultas por wlan0, sí podemos
+        // seguir escuchando los anuncios multicast que adbd manda por su cuenta.
+        val bound = runCatching { network.bindSocket(sock) }
+            .onFailure {
+                logw("[$serviceType/socket] no se pudo atar a la Wi-Fi, se escucha en pasivo", it)
+                listener.onLog(
+                    "La VPN impide atar el socket a la Wi-Fi (${it.message}); " +
+                        "se queda a la escucha pasiva",
+                )
+            }
+            .isSuccess
+
         try {
-            network.bindSocket(sock)
             sock.timeToLive = 255
             sock.soTimeout = RECEIVE_TIMEOUT_MILLIS
             if (nif != null) {
@@ -97,7 +111,7 @@ class MdnsSocketDiscovery(
                     .onFailure { logw("[$serviceType/socket] joinGroup falló", it) }
             }
         } catch (e: Exception) {
-            logw("[$serviceType/socket] no se pudo atar el socket a la red Wi-Fi", e)
+            logw("[$serviceType/socket] no se pudo configurar el socket", e)
             listener.onLog("Descubrimiento directo no disponible: ${e.message}")
             sock.close()
             running = false
@@ -105,7 +119,7 @@ class MdnsSocketDiscovery(
         }
 
         logd("[$serviceType/socket] escuchando en ${sock.localPort} vía ${interfaceName ?: "?"} " +
-            "(unicast=$unicastResponse)")
+            "(unicast=$unicastResponse, atado=$bound)")
         listener.onLog("Descubrimiento directo activo en ${interfaceName ?: "wifi"} ($serviceType)")
 
         val query = MdnsPacket.query(queryName, unicastResponse)

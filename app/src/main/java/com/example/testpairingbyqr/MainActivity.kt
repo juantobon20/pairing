@@ -137,6 +137,8 @@ fun PairingScreen(modifier: Modifier = Modifier) {
             style = MaterialTheme.typography.bodyMedium,
         )
 
+        VpnCard(state.vpnActive)
+
         WirelessDebuggingCard(state.wirelessDebugging, context)
 
         Button(
@@ -190,6 +192,40 @@ fun PairingScreen(modifier: Modifier = Modifier) {
         }
 
         LogCard(state.logs) { clipboard.setText(AnnotatedString(it)) }
+    }
+}
+
+@Composable
+private fun VpnCard(active: Boolean) {
+    if (!active) return
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = "VPN conectada",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = "Android no permite hacer mDNS a una app capturada por una VPN: bloquea " +
+                    "tanto NsdManager como el intento de atar un socket a la Wi-Fi (EPERM). No " +
+                    "es algo que la app pueda sortear.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(
+                text = "Solución: en tu cliente VPN añade esta app a las aplicaciones excluidas " +
+                    "(en WireGuard, «Excluded applications») o desconecta la VPN. El " +
+                    "descubrimiento se relanza solo en cuanto la red cambie.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
     }
 }
 

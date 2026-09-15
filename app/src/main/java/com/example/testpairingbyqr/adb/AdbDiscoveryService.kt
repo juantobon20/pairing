@@ -9,6 +9,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.database.ContentObserver
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -54,6 +57,30 @@ class AdbDiscoveryService : Service(), AdbMdnsDiscovery.Listener {
                 wirelessDebuggingObserver,
             )
         }.onFailure { logw("No se pudo observar adb_wifi_enabled", it) }
+        runCatching {
+            getSystemService(ConnectivityManager::class.java)
+                .registerDefaultNetworkCallback(networkCallback)
+        }.onFailure { logw("No se pudo observar la red por defecto", it) }
+    }
+
+    /**
+     * Sin esto, al desconectar la VPN la app se quedaba esperando a un reintento que quizá ya
+     * se había agotado. Ahora el cambio de red relanza el descubrimiento en el acto.
+     */
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+            val vpn = caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+            val wasVpn = AdbDiscoveryRepository.state.value.vpnActive
+            AdbDiscoveryRepository.setVpnActive(vpn)
+            if (wasVpn && !vpn) {
+                logd("VPN desconectada: relanzando el descubrimiento")
+                discoveries.forEach { it.start() }
+            }
+        }
+
+        override fun onLost(network: Network) {
+            logd("Red por defecto perdida")
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -79,6 +106,7 @@ class AdbDiscoveryService : Service(), AdbMdnsDiscovery.Listener {
         AdbDiscoveryRepository.log(LocalNetworkAccess.diagnostics(this))
         AdbDiscoveryRepository.log(NetworkDiagnostics.describe(this))
         AdbDiscoveryRepository.setWirelessDebugging(NetworkDiagnostics.isWirelessDebuggingEnabled(this))
+        AdbDiscoveryRepository.setVpnActive(NetworkDiagnostics.hasVpn(this))
         if (discoveries.isEmpty()) {
             discoveries = listOf(
                 AdbMdnsDiscovery(this, SERVICE_TYPE_PAIRING, this),
@@ -97,6 +125,9 @@ class AdbDiscoveryService : Service(), AdbMdnsDiscovery.Listener {
     override fun onDestroy() {
         logd("Service.onDestroy")
         runCatching { contentResolver.unregisterContentObserver(wirelessDebuggingObserver) }
+        runCatching {
+            getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback)
+        }
         discoveries.forEach { it.stop() }
         discoveries = emptyList()
         AdbDiscoveryRepository.setRunning(false)

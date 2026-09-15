@@ -32,6 +32,8 @@ data class DiscoveryState(
     val logs: List<String> = emptyList(),
     /** null mientras no se haya podido leer el ajuste. */
     val wirelessDebugging: Boolean? = null,
+    /** Una VPN al frente bloquea el descubrimiento mDNS a nivel de sistema. */
+    val vpnActive: Boolean = false,
 ) {
     val pairingEndpoints: List<AdbEndpoint> get() = endpoints.filter { it.isPairing }
     val connectEndpoints: List<AdbEndpoint> get() = endpoints.filterNot { it.isPairing }
@@ -100,6 +102,19 @@ object AdbDiscoveryRepository {
                 true -> "Depuración inalámbrica activada: adbd ya puede anunciarse"
                 false -> "Depuración inalámbrica desactivada: adbd no anuncia nada"
                 null -> "Estado de la depuración inalámbrica no legible"
+            },
+        )
+    }
+
+    @Synchronized
+    fun setVpnActive(active: Boolean) {
+        if (_state.value.vpnActive == active) return
+        _state.value = _state.value.copy(vpnActive = active)
+        log(
+            if (active) {
+                "VPN conectada: el sistema bloqueará el descubrimiento mDNS"
+            } else {
+                "VPN desconectada: el descubrimiento mDNS vuelve a estar disponible"
             },
         )
     }
